@@ -40,8 +40,8 @@ class QuestionState(TypedDict):
 
 
 class Summarizer:
-    SECTION_TITLES_PROMPT = """Your mission is to summarize a video using its title and English subtitles. 
-    Your goal is to formulate the insightful notes a careful viewer would make, not to create a detailed, verbatim recital. Prioritize brevity over exhaustiveness.
+    SECTION_TITLES_PROMPT = """Your mission is to write a concise summary of the video. 
+    Identify the core arguments, key findings, and most significant moments a careful viewer would note. The summary must equip a reader to understand the video's primary message and conclusions, compelling them to view the material for greater detail.
     The subtitles are formatted as [timestamp in seconds]: [subtitle].
     For each sentence in your summary, provide the timestamp corresponding to the relevant part of the video. For example, a summary sentence based on content starting at 31 seconds should be formatted as [31]: Summary sentence..
     
@@ -54,7 +54,7 @@ class Summarizer:
     Your summary:
     """
     
-    SUMMARY_PROMPT = """Your mission is to write a concise summary of a video using its title and chapter summaries.
+    SUMMARY_PROMPT = """Your mission is to write concise TL;DR for a video.
     The chapter summaries are formatted as [timestamp in seconds]: chapter summary.
     The video title is: {video_title}
     The chapter summaries are provided between the triple backticks:

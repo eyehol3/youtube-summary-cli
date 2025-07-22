@@ -73,6 +73,12 @@ def main(
                 video_information.title, subtitles, question
             )
 
+        if debug_mode:
+            console.print(f"[dim]Debug - Section summaries count: {len(section_summaries)}[/dim]")
+            console.print(f"[dim]Debug - Output length: {len(output)}[/dim]")
+            if section_summaries:
+                console.print(f"[dim]Debug - First section summary: {section_summaries[0]}[/dim]")
+
         console.print()
         console.print(
             f"[bold]Title:[/bold] [link={video_information.url}]"
@@ -102,6 +108,8 @@ def main(
             console.print()
             console.print("[bold]Chapter Summaries:[/bold]")
             console.print(get_pretty_section_summary_text(url, section_summaries))
+            if not section_summaries:
+                console.print("[dim]No timestamped sections found.[/dim]")
 
         console.print()
         console.print("[bold]OpenAI Stats:[/bold]")
