@@ -179,10 +179,7 @@ class Summarizer:
             })
         
         response = await self.llm.ainvoke(prompt)
-        return {
-            "final_summary": response.content,
-            "section_responses": state["section_responses"] 
-            }
+        return { "final_summary": response.content }
 
     def summarize(self, video_title: str, subtitles: str, question: Optional[str] = None) -> tuple[List[SectionSummary], str]:
         """
