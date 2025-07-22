@@ -8,7 +8,7 @@ from typer.rich_utils import (
     ERRORS_PANEL_TITLE,
     STYLE_ERRORS_PANEL_BORDER,
 )
-from youtube_summary.overall_summarizer import Summarizer, SectionSummary
+from youtube_summary.summarizer import Summarizer, SectionSummary
 from youtube_summary.transcript import get_transcripts
 from youtube_summary.video_infromation import extract_video_information
 
