@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 import typer
 from langchain_community.callbacks import get_openai_callback
 from rich.console import Console
@@ -47,9 +47,13 @@ def pretty_print_exception_message(console: Console, e: Exception) -> None:
 
 
 @app.command()
-def main(url: str, debug_mode: bool = False):
+def main(
+    url: str, 
+    debug_mode: bool = False,
+    question: Optional[str] = typer.Option(None, "--question", "-q", help="Ask a specific question about the video instead of generating a summary")
+):
     """
-    A simple CLI tool that summarizes YouTube videos.
+    A simple CLI tool that summarizes YouTube videos or answers questions about them.
 
     If you encounter a bug, please open an issue at: https://github.com/mmaorc/youtube-summary-cli.
 
@@ -65,8 +69,8 @@ def main(url: str, debug_mode: bool = False):
         subtitles = get_transcripts(video_information.id)
 
         with get_openai_callback() as cb:
-            section_summaries, overall_summary = summarizer.summarize(
-                video_information.title, subtitles
+            section_summaries, output = summarizer.summarize(
+                video_information.title, subtitles, question
             )
 
         console.print()
@@ -82,12 +86,22 @@ def main(url: str, debug_mode: bool = False):
         )
 
         console.print()
-        console.print("[bold]Summary:[/bold]")
-        console.print(overall_summary)
+        if question:
+            console.print(f"[bold]Question:[/bold] {question}")
+            console.print()
+            console.print("[bold]Answer:[/bold]")
+            if not section_summaries:
+                console.print(output)
+            else:
+                console.print(get_pretty_section_summary_text(url, section_summaries))
+        
+        else:
+            console.print("[bold]Summary:[/bold]")
+            console.print(output)
 
-        console.print()
-        console.print("[bold]Chapter Summaries:[/bold]")
-        console.print(get_pretty_section_summary_text(url, section_summaries))
+            console.print()
+            console.print("[bold]Chapter Summaries:[/bold]")
+            console.print(get_pretty_section_summary_text(url, section_summaries))
 
         console.print()
         console.print("[bold]OpenAI Stats:[/bold]")

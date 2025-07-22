@@ -2,7 +2,7 @@ import asyncio
 import operator
 import re
 from dataclasses import dataclass
-from typing import Annotated, List, TypedDict
+from typing import Annotated, List, TypedDict, Optional
 
 from langchain.chains.combine_documents.reduce import acollapse_docs, split_list_of_docs
 from langchain_core.documents import Document
@@ -25,11 +25,18 @@ class OverallState(TypedDict):
     summaries: Annotated[list, operator.add]
     collapsed_summaries: List[Document]
     final_summary: str
+    question: Optional[str]
 
 
 class SummaryState(TypedDict):
     content: str
     video_title: str
+
+
+class QuestionState(TypedDict):
+    content: str
+    video_title: str
+    question: str
 
 
 class Summarizer:
@@ -57,12 +64,30 @@ class Summarizer:
 
     Your concise video summary:"""
     
+    QUESTION_PROMPT = """Your mission is to answer a question about a video using its title and English subtitles. Answer the question directly and concisely based only on the information within the provided subtitles. If the answer cannot be found, state that clearly.
+    The subtitles are formatted as [timestamp in seconds]: [subtitle].
+    For each sentence in your answer, provide the timestamp corresponding to the relevant part of the subtitles. For example, an answer sentence based on content starting at 31 seconds should be formatted as [31]: Answer sentence..
+    
+    The question is: {question}
+    The video title is: {video_title}
+    The subtitles are provided between the triple backticks:
+    ```
+    {text}
+    ```
+
+    Your answer:
+    """
+    
     SECTION_PROMPT_TEMPLATE = PromptTemplate(
         template=SECTION_TITLES_PROMPT, input_variables=["text", "video_title"]
     )
     
     OVERALL_PROMPT_TEMPLATE = PromptTemplate(
         template=SUMMARY_PROMPT, input_variables=["text", "video_title"]
+    )
+    
+    QUESTION_PROMPT_TEMPLATE = PromptTemplate(
+        template=QUESTION_PROMPT, input_variables=["text", "video_title", "question"]
     )
 
     def __init__(self, max_summary_len_tokens: int = 500, chunk_size: int = 8000):
@@ -82,11 +107,13 @@ class Summarizer:
         graph = StateGraph(OverallState)
         
         graph.add_node("generate_summary", self._generate_section_summary)
+        graph.add_node("generate_question_answer", self._generate_section_question_answer)
         graph.add_node("collect_summaries", self._collect_summaries)
         graph.add_node("generate_final_summary", self._generate_final_summary)
         
-        graph.add_conditional_edges(START, self._map_summaries, ["generate_summary"])
+        graph.add_conditional_edges(START, self._map_initial, ["generate_summary", "generate_question_answer"])
         graph.add_edge("generate_summary", "collect_summaries")
+        graph.add_edge("generate_question_answer", "collect_summaries")
         graph.add_edge("collect_summaries", "generate_final_summary")
         graph.add_edge("generate_final_summary", END)
         
@@ -96,12 +123,22 @@ class Summarizer:
         """Get number of tokens for input contents."""
         return sum(self.llm.get_num_tokens(doc.page_content) for doc in documents)
     
-    def _map_summaries(self, state: OverallState):
-        """Map each content chunk to a summary generation node."""
-        return [
-            Send("generate_summary", {"content": content, "video_title": state["video_title"]}) 
-            for content in state["contents"]
-        ]
+    def _map_initial(self, state: OverallState):
+        """Map each content chunk to either summary or question node."""
+        if state.get("question"):
+            return [
+                Send("generate_question_answer", {
+                    "content": content, 
+                    "video_title": state["video_title"],
+                    "question": state["question"]
+                }) 
+                for content in state["contents"]
+            ]
+        else:
+            return [
+                Send("generate_summary", {"content": content, "video_title": state["video_title"]}) 
+                for content in state["contents"]
+            ]
 
     async def _generate_section_summary(self, state: SummaryState):
         """Generate summary for a section."""
@@ -112,19 +149,38 @@ class Summarizer:
         response = await self.llm.ainvoke(prompt)
         return {"summaries": [response.content]}
 
+    async def _generate_section_question_answer(self, state: QuestionState):
+        """Generate question answer for a section."""
+        prompt = self.QUESTION_PROMPT_TEMPLATE.invoke({
+            "text": state["content"], 
+            "video_title": state["video_title"],
+            "question": state["question"]
+        })
+        response = await self.llm.ainvoke(prompt)
+        return {"summaries": [response.content]}
+
     def _collect_summaries(self, state: OverallState):
         """Collect all summaries into documents."""
         return {
             "collapsed_summaries": [Document(page_content=summary) for summary in state["summaries"]]
         }
 
-    async def _reduce(self, documents: List[Document], video_title: str) -> str:
-        """Reduce documents to a single summary."""
+    async def _reduce(self, documents: List[Document], video_title: str, question: Optional[str] = None) -> str:
+        """Reduce documents to a single summary or answer."""
         combined_text = "\n".join([doc.page_content for doc in documents])
-        prompt = self.OVERALL_PROMPT_TEMPLATE.invoke({
-            "text": combined_text,
-            "video_title": video_title
-        })
+        
+        if question:
+            prompt = self.QUESTION_PROMPT_TEMPLATE.invoke({
+                "text": combined_text,
+                "video_title": video_title,
+                "question": question
+            })
+        else:
+            prompt = self.OVERALL_PROMPT_TEMPLATE.invoke({
+                "text": combined_text,
+                "video_title": video_title
+            })
+        
         response = await self.llm.ainvoke(prompt)
         return response.content
 
@@ -132,15 +188,21 @@ class Summarizer:
         """Generate the final summary, collapsing if necessary."""
         documents = state["collapsed_summaries"]
         video_title = state["video_title"]
-        final_summary = await self._reduce(documents, video_title)
+        question = state.get("question")
+        final_summary = await self._reduce(documents, video_title, question)
         return {"final_summary": final_summary}
 
-    def summarize(self, video_title: str, subtitles: str) -> tuple[List[SectionSummary], str]:
+    def summarize(self, video_title: str, subtitles: str, question: Optional[str] = None) -> tuple[List[SectionSummary], str]:
         """
-        Summarize video subtitles into sections and overall summary.
+        Summarize video subtitles into sections and overall summary, or answer a question.
+        
+        Args:
+            video_title: Title of the video
+            subtitles: Video subtitles text
+            question: Optional question to answer instead of summarizing
         
         Returns:
-            tuple: (section_summaries, overall_summary)
+            tuple: (section_summaries, overall_summary_or_answer)
         """
         docs = [Document(page_content=subtitles)]
         split_docs = self.text_splitter.split_documents(docs)
@@ -151,7 +213,8 @@ class Summarizer:
             "contents": chunks,
             "summaries": [],
             "collapsed_summaries": [],
-            "final_summary": ""
+            "final_summary": "",
+            "question": question
         }))
         
         section_summaries = []
