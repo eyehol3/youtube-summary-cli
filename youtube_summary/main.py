@@ -1,6 +1,6 @@
 from typing import List
 import typer
-from langchain.callbacks import get_openai_callback
+from langchain_community.callbacks import get_openai_callback
 from rich.console import Console
 from rich.panel import Panel
 from typer.rich_utils import (
@@ -8,10 +8,8 @@ from typer.rich_utils import (
     ERRORS_PANEL_TITLE,
     STYLE_ERRORS_PANEL_BORDER,
 )
-from youtube_summary.overall_summarizer import OverallSummarizer
-from youtube_summary.section_summarizer import SectionSummarizer, SectionSummary
+from youtube_summary.overall_summarizer import Summarizer, SectionSummary
 from youtube_summary.transcript import get_transcripts
-
 from youtube_summary.video_infromation import extract_video_information
 
 app = typer.Typer()
@@ -20,7 +18,7 @@ app = typer.Typer()
 def pretty_timestamp(timestamp_seconds: int) -> str:
     hours, remainder = divmod(timestamp_seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
-    return f"{hours}:{minutes}:{seconds}"
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
 def get_pretty_section_summary_text(
@@ -61,19 +59,14 @@ def main(url: str, debug_mode: bool = False):
     err_console = Console(stderr=True)
 
     try:
-        section_summarizer = SectionSummarizer()
-        overall_summarizer = OverallSummarizer()
+        summarizer = Summarizer()
 
         video_information = extract_video_information(url)
-
         subtitles = get_transcripts(video_information.id)
 
         with get_openai_callback() as cb:
-            section_summaries = section_summarizer.summarize(
+            section_summaries, overall_summary = summarizer.summarize(
                 video_information.title, subtitles
-            )
-            summary = overall_summarizer.summarize(
-                video_information.title, section_summaries
             )
 
         console.print()
@@ -90,7 +83,7 @@ def main(url: str, debug_mode: bool = False):
 
         console.print()
         console.print("[bold]Summary:[/bold]")
-        console.print(summary)
+        console.print(overall_summary)
 
         console.print()
         console.print("[bold]Chapter Summaries:[/bold]")

@@ -7,7 +7,7 @@ from youtube_transcript_api import (
 
 def get_transcripts(video_id: str) -> str:
     try:
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        transcript_list = YouTubeTranscriptApi().list(video_id)
     except TranscriptsDisabled as e:
         raise Exception("Transcripts are disabled for this video") from e
 
@@ -20,9 +20,9 @@ def get_transcripts(video_id: str) -> str:
 
     subtitles = "\n".join(
         [
-            f"{sbt['start']}: {sbt['text']}"
+            f"{sbt.start}: {sbt.text}"
             for sbt in subtitles
-            if sbt["text"] != "[Music]"
+            if sbt.text != "[Music]"
         ]
     )
 
