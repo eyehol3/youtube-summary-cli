@@ -22,8 +22,7 @@ class SectionSummary:
 class OverallState(TypedDict):
     video_title: str
     contents: List[str]
-    summaries: Annotated[list, operator.add]
-    collapsed_summaries: List[Document]
+    section_responses: Annotated[list, operator.add]
     final_summary: str
     question: Optional[str]
 
@@ -42,8 +41,10 @@ class QuestionState(TypedDict):
 class Summarizer:
     SECTION_TITLES_PROMPT = """Your mission is to write a concise summary of the video. 
     Identify the core arguments, key findings, and most significant moments a careful viewer would note. The summary must equip a reader to understand the video's primary message and conclusions, compelling them to view the material for greater detail.
-    The subtitles are formatted as [timestamp in seconds]: [subtitle].
-    For each sentence in your summary, provide the timestamp corresponding to the relevant part of the video. For example, a summary sentence based on content starting at 31 seconds should be formatted as [31]: Summary sentence..
+    The subtitles are formatted as [timestamp in seconds]: subtitle.
+    For each sentence in your summary, provide the timestamp corresponding to the relevant part of the video. 
+    For example, a summary sentence based on content starting at 31 seconds should be formatted as 
+    `[31]: Summary sentence..`
     
     The video title is: {video_title}
     The subtitles are provided between the triple backticks:
@@ -65,8 +66,10 @@ class Summarizer:
     Your concise video summary:"""
     
     QUESTION_PROMPT = """Your mission is to answer a question about a video using its title and English subtitles. Answer the question directly and concisely based only on the information within the provided subtitles. If the answer cannot be found, state that clearly.
-    The subtitles are formatted as [timestamp in seconds]: [subtitle].
-    For each sentence in your answer, provide the timestamp corresponding to the relevant part of the subtitles. For example, an answer sentence based on content starting at 31 seconds should be formatted as [31]: Answer sentence..
+    The subtitles are formatted as `[timestamp in seconds]: [subtitle]`.
+    For each sentence in your answer, provide the timestamp corresponding to the relevant part of the subtitles. 
+    For example, an answer sentence based on content starting at 31 seconds should be formatted as 
+    `[31]: Answer sentence..`
     
     The question is: {question}
     The video title is: {video_title}
@@ -90,7 +93,7 @@ class Summarizer:
         template=QUESTION_PROMPT, input_variables=["text", "video_title", "question"]
     )
 
-    def __init__(self, max_summary_len_tokens: int = 500, chunk_size: int = 8000):
+    def __init__(self, max_summary_len_tokens: int = 1000, chunk_size: int = 8000):
         self.max_summary_len_tokens = max_summary_len_tokens
         self.chunk_size = chunk_size
         self.llm = ChatOpenAI(temperature=0, model_name="gpt-4.1-mini", max_completion_tokens=self.max_summary_len_tokens)
@@ -108,13 +111,11 @@ class Summarizer:
         
         graph.add_node("generate_summary", self._generate_section_summary)
         graph.add_node("generate_question_answer", self._generate_section_question_answer)
-        graph.add_node("collect_summaries", self._collect_summaries)
         graph.add_node("generate_final_summary", self._generate_final_summary)
         
         graph.add_conditional_edges(START, self._map_initial, ["generate_summary", "generate_question_answer"])
-        graph.add_edge("generate_summary", "collect_summaries")
-        graph.add_edge("generate_question_answer", "collect_summaries")
-        graph.add_edge("collect_summaries", "generate_final_summary")
+        graph.add_edge("generate_summary", "generate_final_summary")
+        graph.add_edge("generate_question_answer", "generate_final_summary")
         graph.add_edge("generate_final_summary", END)
         
         return graph.compile()
@@ -147,7 +148,7 @@ class Summarizer:
             "video_title": state["video_title"]
         })
         response = await self.llm.ainvoke(prompt)
-        return {"summaries": [response.content]}
+        return {"section_responses": [response.content]}
 
     async def _generate_section_question_answer(self, state: QuestionState):
         """Generate question answer for a section."""
@@ -157,17 +158,13 @@ class Summarizer:
             "question": state["question"]
         })
         response = await self.llm.ainvoke(prompt)
-        return {"summaries": [response.content]}
+        return {"section_responses": [response.content]}
 
-    def _collect_summaries(self, state: OverallState):
-        """Collect all summaries into documents."""
-        return {
-            "collapsed_summaries": [Document(page_content=summary) for summary in state["summaries"]]
-        }
-
-    async def _reduce(self, documents: List[Document], video_title: str, question: Optional[str] = None) -> str:
-        """Reduce documents to a single summary or answer."""
-        combined_text = "\n".join([doc.page_content for doc in documents])
+    async def _generate_final_summary(self, state: OverallState):
+        """Generate the final summary from section responses."""
+        combined_text = "\n".join(state["section_responses"])
+        video_title = state["video_title"]
+        question = state.get("question")
         
         if question:
             prompt = self.QUESTION_PROMPT_TEMPLATE.invoke({
@@ -182,15 +179,10 @@ class Summarizer:
             })
         
         response = await self.llm.ainvoke(prompt)
-        return response.content
-
-    async def _generate_final_summary(self, state: OverallState):
-        """Generate the final summary, collapsing if necessary."""
-        documents = state["collapsed_summaries"]
-        video_title = state["video_title"]
-        question = state.get("question")
-        final_summary = await self._reduce(documents, video_title, question)
-        return {"final_summary": final_summary}
+        return {
+            "final_summary": response.content,
+            "section_responses": state["section_responses"] 
+            }
 
     def summarize(self, video_title: str, subtitles: str, question: Optional[str] = None) -> tuple[List[SectionSummary], str]:
         """
@@ -211,16 +203,15 @@ class Summarizer:
         result = asyncio.run(self.app.ainvoke({
             "video_title": video_title,
             "contents": chunks,
-            "summaries": [],
-            "collapsed_summaries": [],
+            "section_responses": [],
             "final_summary": "",
             "question": question
         }))
         
         section_summaries = []
-        for summary_text in result.get("summaries", []):
-            section_summaries.extend(self._parse_section_summaries_text(summary_text))
-        
+        for response_text in result.get("section_responses", []):
+            section_summaries.extend(self._parse_section_summaries_text(response_text))
+
         return section_summaries, result["final_summary"]
 
     @staticmethod
